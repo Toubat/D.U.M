@@ -12,11 +12,12 @@ class PoseDetector():
     def get_video_keypoints(self, path='./sample.mp4'):
         cap = cv2.VideoCapture(path)
         keypoints = []
+        originals = []
         while cap.isOpened():
-            keypoint = []
             _, img = cap.read()
             if (img is None):
                 break
+            keypoint = []
             img_RGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             result = self.pose.process(img_RGB)
             if result.pose_landmarks:
@@ -32,8 +33,10 @@ class PoseDetector():
                     keypoint.append(lm.y * 2 - 1)
                     keypoint.append(lm.z)
                 keypoints.append(keypoint)   
+                originals.append(result.pose_landmarks)
             else:
-                keypoints.append(keypoints[-1])   
+                keypoints.append(keypoints[-1])  
+                originals.append(originals[-1])
             # cv2.putText(img, str(int(fps)), (70, 50), cv2.FONT_HERSHEY_PLAIN, 3, (255, 0, 0), 3)
             # cv2.imshow("Image", img)
             if cv2.waitKey(5) & 0xFF == 27:
@@ -43,14 +46,33 @@ class PoseDetector():
 
         keypoints = np.array(keypoints) # convert into numpy array
 
-        return keypoints
+        return keypoints, originals
+
+
+def video_show(originals, path='./sample.mp4'):
+    mp_pose = mp.solutions.pose
+    mp_draw = mp.solutions.drawing_utils
+
+    cap = cv2.VideoCapture(path)
+    i = 0
+
+    while(cap.isOpened()):
+        _, img = cap.read()    
+        if (img is None):
+                break
+        mp_draw.draw_landmarks(img, originals[i], mp_pose.POSE_CONNECTIONS)  
+        cv2.imshow('frame',img)
+        i += 1
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
 
 
 def main():
     path = 'path/to/video.mp4'
     detector = PoseDetector()
-    keypoints = detector.get_video_keypoints()
-    print(keypoints)
+    keypoints2, originals2 = detector.get_video_keypoints('https://aistdancedb.ongaaccel.jp/v1.0.0/video/10M/gBR_sBM_c01_d04_mBR0_ch01.mp4')
 
     return 0
 
