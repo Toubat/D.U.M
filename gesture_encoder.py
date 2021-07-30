@@ -160,20 +160,20 @@ class EncoderLayer(nn.Module):
 
 
 class GestureEncoder(nn.Module):
-  def __init__(self, num_layers, n_heads, in_dim, hid_dim, pos_ff_dim, dropout):
-    super(GestureEncoder, self).__init__()
+    def __init__(self, num_layers, n_heads, in_dim, hid_dim, pos_ff_dim, dropout):
+        super(GestureEncoder, self).__init__()
 
-    self.encoder_layer = EncoderLayer(hid_dim, n_heads, pos_ff_dim, dropout)
-    self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers)
-    
-    self.fc = nn.Linear(in_dim, hid_dim)
-    self.dropout = nn.Dropout(dropout)
+        self.encoder_layer = EncoderLayer(hid_dim, n_heads, pos_ff_dim, dropout)
+        self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers)
+        
+        self.fc = nn.Linear(in_dim, hid_dim)
+        self.dropout = nn.Dropout(dropout)
 
-  def forward(self, src):
-    src = self.dropout(self.fc(src))
-    src = self.encoder(src)
+    def forward(self, src):
+        src = self.dropout(self.fc(src))
+        src = self.encoder(src)
 
-    return src
+        return src
 
 
 def main():
