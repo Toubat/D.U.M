@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from torch.nn.modules import flatten
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -21,6 +22,7 @@ class RelativePosition(nn.Module):
         final_mat = torch.LongTensor(final_mat).to(device)
         embeddings = self.embeddings_table[final_mat].to(device)
 
+        # [max_len, max_len, hid_dim]
         return embeddings
 
 
@@ -159,6 +161,24 @@ class EncoderLayer(nn.Module):
         return src
 
 
+class DecoderLayer(nn.Module):
+    def __init__(self, hid_dim, n_heads, pos_ff_dim, dropout, out_dim):
+        super(DecoderLayer, self).__init__()
+        self.encoder_layer = EncoderLayer(hid_dim, n_heads, pos_ff_dim, dropout)
+        self.deconv = nn.ConvTranspose1d(hid_dim, out_dim, kernel_size=4, stride=2, padding=1)
+        self.bn = nn.BatchNorm1d(out_dim, momentum=0.9)
+
+    def forward(self, x, upsample=True):
+        # [batch_size, max_len, hid_dim]
+        x = self.encoder_layer(x)
+        if upsample:
+            # [batch_size, hid_dim, max_len]
+            x = x.permute(0, 2, 1)
+            # [batch_size, out_dim, 2 * max_len]
+            x = self.bn(self.deconv(x)).permute(0, 2, 1)
+
+        return x
+
 class GestureEncoder(nn.Module):
     def __init__(self, num_layers, n_heads, in_dim, hid_dim, out_dim, max_len, pos_ff_dim, dropout):
         super(GestureEncoder, self).__init__()
@@ -182,13 +202,14 @@ class GestureEncoder(nn.Module):
     def forward(self, src): # [640, 69]
         batch_size = src.size()[0]
         # [batch_size, max_len, in_dim] -> [batch_size, in_dim, max_len]
-        src = src.permute(0, 2, 1).contiguous()
+        src = src.permute(0, 2, 1)
+        # [batch_size, 69, 640]
         # [batch_size, hid_dim, max_len]
-        src = self.bn_1(self.conv(src)).permute(0, 2, 1).contiguous()
-        # [batch_size, max_len, hid_dim]
+        src = self.bn_1(self.conv(src)).permute(0, 2, 1)
+        # [batch_size, max_len=640, hid_dim=256]
         src = self.encoder(src)
         # [batch_size, max_len, reduce_dim]
-        src = self.fc(src).permute(0, 2, 1).contiguous()
+        src = self.fc(src).permute(0, 2, 1)
         src = self.bn_2(src).permute(0, 2, 1).contiguous()
         src = self.relu(src)
 
@@ -203,26 +224,102 @@ class GestureEncoder(nn.Module):
 
 
 class MusicGenerator(nn.Module):
-    def __init__(self, n_fft, in_dim, max_len):
+    def __init__(self, in_dim, output_len):
         super(MusicGenerator, self).__init__()
 
-        self.fc = nn.Linear(in_dim, 1024)
-        self.encoder_layers = nn.ModuleList([
-            EncoderLayer(hid_dim=16, n_heads=6, pos_ff_dim=512, dropout=0.1),
-
-            EncoderLayer(hid_dim=32, n_heads=6, pos_ff_dim=512, dropout=0.1),
-            EncoderLayer(hid_dim=64, n_heads=6, pos_ff_dim=512, dropout=0.1),
-            EncoderLayer(hid_dim=128, n_heads=6, pos_ff_dim=512, dropout=0.1),
+        self.fc_1 = nn.Linear(in_dim, 1024)
+        self.fc_2 = nn.Linear(512, output_len)
+        self.decoder_layers = nn.ModuleList([
+            DecoderLayer(hid_dim=16, n_heads=1, pos_ff_dim=512, dropout=0.1, out_dim=32),
+            DecoderLayer(hid_dim=32, n_heads=2, pos_ff_dim=512, dropout=0.1, out_dim=64),
+            DecoderLayer(hid_dim=64, n_heads=4, pos_ff_dim=512, dropout=0.1, out_dim=128),
+            DecoderLayer(hid_dim=128, n_heads=8, pos_ff_dim=512, dropout=0.1, out_dim=256),
         ])
-
 
     def forward(self, x): # [batch_size, in_dim=512]
         # [batch_size, 1024]
-        x = self.fc(x)
+        x = self.fc_1(x)
         # [batch_size, max_len=64, hid_dim=16]
         x = x.view(-1, 64, 16)
-        
+        for i, layer in enumerate(self.decoder_layers):
+            # [batch_size, max_len, hid_dim] -> [batch_size, hid_dim, max_len]
+            upsample = True if i < 3 else False
+            x = layer(x, upsample)
+        # [batch_size, 512, 128] -> [batch_size, output_len, 128]
+        x = self.fc_2(x.transpose(1, 2)).transpose(1, 2)
 
+        return x
+
+
+class Discriminator(nn.Module):
+    def __init__(self, num_layers, hid_dim, n_heads, pos_ff_dim, dropout, output_len):
+        super(Discriminator, self).__init__()
+
+        self.encoder = nn.TransformerEncoder(
+            EncoderLayer(hid_dim, n_heads, pos_ff_dim, dropout), 
+            num_layers
+        )
+        self.fc_1 = nn.Linear(hid_dim, 64)
+        self.bn = nn.BatchNorm1d(64, momentum=0.9)
+        self.fc_2 = nn.Linear(64 * output_len, 1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        batch_size=x.size()[0]
+        x = self.encoder(x)
+        x = self.bn(self.fc_1(x).transpose(1, 2)).transpose(1, 2).contiguous()
+        x = x.view(batch_size, -1)
+        x_flatten = x
+        x = self.sigmoid(self.fc_2(x))
+
+        return x, x_flatten
+
+
+# VAE-GAN with Transformer
+# x -> GestureEncoder -> latent vector (v) -> MusicGenerator -> music spectrogram (m) -> Discriminator -> fake/real -> loss
+class VAE_TransGAN(nn.Module):
+    def __init__(self, input_len, output_len):
+        super(VAE_TransGAN, self).__init__()
+        
+        self.gesture_encoder = GestureEncoder(
+            num_layers=6, 
+            n_heads=8, 
+            in_dim=69, 
+            hid_dim=256, 
+            out_dim=512, 
+            max_len=input_len, 
+            pos_ff_dim=512, 
+            dropout=0.1
+        )
+        self.music_generator = MusicGenerator(in_dim=512, output_len=output_len)
+        self.discriminator = Discriminator(
+            num_layers=6, 
+            hid_dim=128, 
+            n_heads=4, 
+            pos_ff_dim=512, 
+            dropout=0.1, 
+            output_len=output_len
+        )
+
+    def reparameterize(self, mean, log_var):
+        std = torch.exp(log_var/2)
+        eps = torch.randn_like(std)
+        return mean + eps * std
+
+    def forward(self, gesture, music_real):
+        # x = [batch_size, input_len, 69]
+        # music_real = [batch_size, output_len, 128]
+        mean, log_var = self.gesture_encoder(gesture)
+        # [batch_size, 512]
+        z = self.reparameterize(mean, log_var)
+        # music_real = [batch_size, output_len, 128]
+        music_fake = self.music_generator(z)
+
+        # [batch_size, 1], [batch_size, output_len * 64]
+        real_score, real_layer = self.discriminator(music_real)
+        fake_score, fake_layer = self.discriminator(music_fake)
+
+        return mean, log_var, real_score, fake_score, real_layer, fake_layer
 
 def main():
     model = GestureEncoder(
@@ -237,8 +334,28 @@ def main():
     ).to('cpu')
     
     # testing if model can output matrix with correct dimension
-    src = torch.randn(20, 640, 69)
+    src = torch.randn(10, 640, 69)
     mean, logvar = model.forward(src)
 
     print(mean.shape)
     print(logvar.shape)
+
+    generator = MusicGenerator(256, 431)
+    x = torch.randn(10, 256)
+    out = generator.forward(x)
+    print(out.size())
+
+    discriminator = Discriminator(
+        num_layers=6, 
+        hid_dim=128, 
+        n_heads=4, 
+        pos_ff_dim=512, 
+        dropout=0.1, 
+        output_len=431
+    )
+    x = torch.randn(10, 431, 128)
+    x, x_flatten = discriminator.forward(x)
+    print(x.size())
+    print(x_flatten.size())
+
+    return 0
