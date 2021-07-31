@@ -44,9 +44,19 @@ class PoseDetector():
         cap.release()
         cv2.destroyAllWindows()
 
+        # [600, 69]
         keypoints = np.array(keypoints) # convert into numpy array
 
         return keypoints, originals
+
+"""
+/video
+    gLO_sBM_c03_d15_mLO5_ch04.npy
+    gLO_sBM_c03_d15_mLO5_ch04.npy
+    gLO_sBM_c03_d15_mLO5_ch04.npy
+    gLO_sBM_c03_d15_mLO5_ch04.npy
+
+"""
 
 
 def video_show(originals, path='./sample.mp4'):
@@ -72,7 +82,8 @@ def video_show(originals, path='./sample.mp4'):
 def main():
     path = 'path/to/video.mp4'
     detector = PoseDetector()
-    keypoints2, originals2 = detector.get_video_keypoints('https://aistdancedb.ongaaccel.jp/v1.0.0/video/10M/gBR_sBM_c01_d04_mBR0_ch01.mp4')
+    keypoints, _ = detector.get_video_keypoints('https://s3.abci.ai/aistdancedb.ongaaccel.jp/v1.0.0/video/10M/gBR_sBM_c07_d04_mBR1_ch08.mp4')
+    print(keypoints.shape)
 
     return 0
 
