@@ -2,6 +2,8 @@ import librosa
 import librosa.display
 import matplotlib.pyplot as plt
 
+import os 
+
 import torch
 import torchaudio
 import torchaudio.transforms as T
@@ -49,17 +51,18 @@ class AudioToMelSpectrogram():
 
 
 def main():
+    # The following line of code is only needed for windows 
+    #torchaudio.set_audio_backend("soundfile")
     converter = AudioToMelSpectrogram(sample_rate=22050, n_fft=1024, hop_length=512, n_mels=128)    
-    mel_sgram = converter.audio_to_mel('./refined_wav/mBR0.wav')
-    print(mel_sgram.shape)
-    """
-    /mel_spectrogram
-        mBR0.npy
-        mBR1.npy
-        mBR2.npy
-    """
-    audio = converter.mel_to_audio(mel_sgram)
-    # write .wav to a specific file (not needed for now)
-    write('test.wav', 22050, audio.squeeze())
 
+
+    directory = './refined_wav'
+    mel_directory = './npy_audio'
+    for filename in os.listdir(directory):
+        mel_sgram = converter.audio_to_mel('/'.join([directory,filename]))
+        np.save('/'.join([mel_directory,'.'.join([os.path.splitext(filename)[0],'npy'])]), mel_sgram, allow_pickle=True, fix_imports=True)
+    
+    audio = converter.mel_to_audio(mel_sgram)
+    #write .wav to a specific file (not needed for now)
+    #write('test.wav', 22050, audio.squeeze())
     return 0
