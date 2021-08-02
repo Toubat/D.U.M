@@ -22,7 +22,7 @@ class RelativePosition(nn.Module):
         final_mat = torch.LongTensor(final_mat).to(device)
         embeddings = self.embeddings_table[final_mat].to(device)
 
-        # [max_len, max_len, hid_dim]
+        # [max_len, max_len, hid_dim]  
         return embeddings
 
 
@@ -276,7 +276,7 @@ class Discriminator(nn.Module):
 
 
 # VAE-GAN with Transformer
-# x -> GestureEncoder -> latent vector (v) -> MusicGenerator -> music spectrogram (m) -> Discriminator -> fake/real -> loss
+# x (700, 69) -> GestureEncoder -> latent vector (v) -> MusicGenerator -> music spectrogram (m) -> Discriminator -> fake/real -> loss
 class VAE_TransGAN(nn.Module):
     def __init__(self, input_len, output_len):
         super(VAE_TransGAN, self).__init__()
