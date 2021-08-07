@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-from torch.nn.modules import flatten
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -290,8 +289,8 @@ class VAE_TransGAN(nn.Module):
             max_len=input_len, 
             pos_ff_dim=512, 
             dropout=0.1
-        )
-        self.music_generator = MusicGenerator(in_dim=512, output_len=output_len)
+        ).to(device)
+        self.music_generator = MusicGenerator(in_dim=512, output_len=output_len).to(device)
         self.discriminator = Discriminator(
             num_layers=6, 
             hid_dim=128, 
@@ -299,7 +298,7 @@ class VAE_TransGAN(nn.Module):
             pos_ff_dim=512, 
             dropout=0.1, 
             output_len=output_len
-        )
+        ).to(device)
 
     def reparameterize(self, mean, log_var):
         std = torch.exp(log_var/2)
@@ -322,40 +321,16 @@ class VAE_TransGAN(nn.Module):
         return mean, log_var, real_score, fake_score, real_layer, fake_layer
 
 def main():
-    model = GestureEncoder(
-        num_layers=6, 
-        n_heads=8, 
-        in_dim=69, 
-        hid_dim=256, 
-        out_dim=512, 
-        max_len=640, 
-        pos_ff_dim=512, 
-        dropout=0.1
-    ).to('cpu')
-    
-    # testing if model can output matrix with correct dimension
-    src = torch.randn(10, 640, 69)
-    mean, logvar = model.forward(src)
+    gesture = torch.randn(10, 700, 69).to(device)
+    music = torch.randn(10, 431, 128).to(device)
 
-    print(mean.shape)
-    print(logvar.shape)
-
-    generator = MusicGenerator(256, 431)
-    x = torch.randn(10, 256)
-    out = generator.forward(x)
-    print(out.size())
-
-    discriminator = Discriminator(
-        num_layers=6, 
-        hid_dim=128, 
-        n_heads=4, 
-        pos_ff_dim=512, 
-        dropout=0.1, 
-        output_len=431
-    )
-    x = torch.randn(10, 431, 128)
-    x, x_flatten = discriminator.forward(x)
-    print(x.size())
-    print(x_flatten.size())
+    model = VAE_TransGAN(700, 431)
+    mean, log_var, real_score, fake_score, real_layer, fake_layer = model.forward(gesture, music)
+    for x in [mean, log_var, real_score, fake_score, real_layer, fake_layer]:
+        print(x.size(), x.requires_grad)
 
     return 0
+
+
+if __name__ == '__main__':
+    main()
