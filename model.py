@@ -226,9 +226,10 @@ class MusicGenerator(nn.Module):
     def __init__(self, in_dim, output_len):
         super(MusicGenerator, self).__init__()
 
-        self.fc_1 = nn.Linear(in_dim, 1024)
-        self.fc_2 = nn.Linear(512, output_len)
+        self.fc_1 = nn.Linear(in_dim, 512)
+        self.fc_2 = nn.Linear(1024, output_len)
         self.decoder_layers = nn.ModuleList([
+            DecoderLayer(hid_dim=8, n_heads=1, pos_ff_dim=512, dropout=0.1, out_dim=16),
             DecoderLayer(hid_dim=16, n_heads=1, pos_ff_dim=512, dropout=0.1, out_dim=32),
             DecoderLayer(hid_dim=32, n_heads=2, pos_ff_dim=512, dropout=0.1, out_dim=64),
             DecoderLayer(hid_dim=64, n_heads=4, pos_ff_dim=512, dropout=0.1, out_dim=128),
@@ -236,15 +237,15 @@ class MusicGenerator(nn.Module):
         ])
 
     def forward(self, x): # [batch_size, in_dim=512]
-        # [batch_size, 1024]
+        # [batch_size, 512]
         x = self.fc_1(x)
-        # [batch_size, max_len=64, hid_dim=16]
-        x = x.view(-1, 64, 16)
+        # [batch_size, max_len=128, hid_dim=8]
+        x = x.view(-1, 64, 8)
         for i, layer in enumerate(self.decoder_layers):
             # [batch_size, max_len, hid_dim] -> [batch_size, hid_dim, max_len]
-            upsample = True if i < 3 else False
+            upsample = True if i < 4 else False
             x = layer(x, upsample)
-        # [batch_size, 512, 128] -> [batch_size, output_len, 128]
+        # [batch_size, 1024, 128] -> [batch_size, output_len, 128]
         x = self.fc_2(x.transpose(1, 2)).transpose(1, 2)
 
         return x
@@ -285,12 +286,12 @@ class VAE_TransGAN(nn.Module):
             n_heads=8, 
             in_dim=69, 
             hid_dim=256, 
-            out_dim=512, 
+            out_dim=1024, 
             max_len=input_len, 
             pos_ff_dim=512, 
             dropout=0.1
         ).to(device)
-        self.music_generator = MusicGenerator(in_dim=512, output_len=output_len).to(device)
+        self.music_generator = MusicGenerator(in_dim=1024, output_len=output_len).to(device)
         self.discriminator = Discriminator(
             num_layers=6, 
             hid_dim=128, 
@@ -313,7 +314,6 @@ class VAE_TransGAN(nn.Module):
         z = self.reparameterize(mean, log_var)
         # music_real = [batch_size, output_len, 128]
         music_fake = self.music_generator(z)
-
         # [batch_size, 1], [batch_size, output_len * 64]
         real_score, real_layer = self.discriminator(music_real)
         fake_score, fake_layer = self.discriminator(music_fake)
@@ -321,10 +321,10 @@ class VAE_TransGAN(nn.Module):
         return mean, log_var, real_score, fake_score, real_layer, fake_layer
 
 def main():
-    gesture = torch.randn(10, 700, 69).to(device)
-    music = torch.randn(10, 431, 128).to(device)
+    gesture = torch.randn(2, 512, 69).to(device)
+    music = torch.randn(2, 938, 128).to(device)
 
-    model = VAE_TransGAN(700, 431)
+    model = VAE_TransGAN(512, 938)
     mean, log_var, real_score, fake_score, real_layer, fake_layer = model.forward(gesture, music)
     for x in [mean, log_var, real_score, fake_score, real_layer, fake_layer]:
         print(x.size(), x.requires_grad)
