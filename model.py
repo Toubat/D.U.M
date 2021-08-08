@@ -226,27 +226,26 @@ class MusicGenerator(nn.Module):
     def __init__(self, in_dim, output_len):
         super(MusicGenerator, self).__init__()
 
-        self.fc_1 = nn.Linear(in_dim, 512)
-        self.fc_2 = nn.Linear(1024, output_len)
+        assert in_dim == 1024
+        self.fc = nn.Linear(512, output_len)
         self.decoder_layers = nn.ModuleList([
-            DecoderLayer(hid_dim=8, n_heads=1, pos_ff_dim=512, dropout=0.1, out_dim=16),
             DecoderLayer(hid_dim=16, n_heads=1, pos_ff_dim=512, dropout=0.1, out_dim=32),
             DecoderLayer(hid_dim=32, n_heads=2, pos_ff_dim=512, dropout=0.1, out_dim=64),
             DecoderLayer(hid_dim=64, n_heads=4, pos_ff_dim=512, dropout=0.1, out_dim=128),
             DecoderLayer(hid_dim=128, n_heads=8, pos_ff_dim=512, dropout=0.1, out_dim=256),
         ])
+        self.tanh = nn.Tanh()
 
-    def forward(self, x): # [batch_size, in_dim=512]
-        # [batch_size, 512]
-        x = self.fc_1(x)
-        # [batch_size, max_len=128, hid_dim=8]
-        x = x.view(-1, 64, 8)
+    def forward(self, x): # [batch_size, in_dim=1024]
+        # [batch_size, max_len=64, hid_dim=16]
+        x = x.view(-1, 64, 16)
         for i, layer in enumerate(self.decoder_layers):
-            # [batch_size, max_len, hid_dim] -> [batch_size, hid_dim, max_len]
-            upsample = True if i < 4 else False
+            # [batch_size, max_len, hid_dim] -> [batch_size, max_len * 2, hid_dim * 2]
+            upsample = True if i < 3 else False
             x = layer(x, upsample)
-        # [batch_size, 1024, 128] -> [batch_size, output_len, 128]
-        x = self.fc_2(x.transpose(1, 2)).transpose(1, 2)
+        # [batch_size, 512, 128] -> [batch_size, output_len, 128]
+        x = self.fc(x.transpose(1, 2)).transpose(1, 2)
+        x = self.tanh(x)
 
         return x
 
@@ -267,9 +266,9 @@ class Discriminator(nn.Module):
     def forward(self, x):
         batch_size=x.size()[0]
         x = self.encoder(x)
+        x_flatten = x.view(batch_size, -1)
         x = self.bn(self.fc_1(x).transpose(1, 2)).transpose(1, 2).contiguous()
         x = x.view(batch_size, -1)
-        x_flatten = x
         x = self.sigmoid(self.fc_2(x))
 
         return x, x_flatten
@@ -278,7 +277,7 @@ class Discriminator(nn.Module):
 # VAE-GAN with Transformer
 # x (700, 69) -> GestureEncoder -> latent vector (v) -> MusicGenerator -> music spectrogram (m) -> Discriminator -> fake/real -> loss
 class VAE_TransGAN(nn.Module):
-    def __init__(self, input_len, output_len, gesture_encoder, music_generator, discriminator):
+    def __init__(self, gesture_encoder, music_generator, discriminator):
         super(VAE_TransGAN, self).__init__()
         
         self.gesture_encoder = gesture_encoder
@@ -308,6 +307,41 @@ class VAE_TransGAN(nn.Module):
 
         return mean, log_var, real_score, fake_score, noise_score, real_layer, fake_layer
 
+    def test(self, gesture):
+        mean, log_var = self.gesture_encoder(gesture)
+        z = self.reparameterize(mean, log_var)
+        music = self.music_generator(z)
+
+        return music
+
 
 if __name__ == '__main__':
-    pass
+    input_len = 512
+    output_len = 431
+
+    gesture_encoder = GestureEncoder(
+        num_layers=6, 
+        n_heads=8, 
+        in_dim=69, 
+        hid_dim=256, 
+        out_dim=1024, 
+        max_len=input_len, 
+        pos_ff_dim=512, 
+        dropout=0.1
+    ).to(device)
+    music_generator = MusicGenerator(in_dim=1024, output_len=output_len).to(device)
+    discriminator = Discriminator(
+        num_layers=6, 
+        hid_dim=128, 
+        n_heads=4, 
+        pos_ff_dim=512, 
+        dropout=0.1, 
+        output_len=output_len
+    ).to(device)
+
+    model = VAE_TransGAN(gesture_encoder, music_generator, discriminator)
+    gesture = torch.randn(2, 512, 69)
+    music = torch.randn(2, 431, 128)
+    mean, log_var, real_score, fake_score, noise_score, real_layer, fake_layer = model.forward(gesture, music)
+    for m in [mean, log_var, real_score, fake_score, noise_score, real_layer, fake_layer]:
+        print(m.size())

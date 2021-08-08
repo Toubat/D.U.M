@@ -11,8 +11,8 @@ class GestureMusicDataset(Dataset):
         self.gestures = os.listdir(gesture_dir)
         self.audios = audio_dir
         self.padding_len = padding_len
-        self.music_mean = np.load(os.path.join(audio_dir, 'mean.npy'))
-        self.music_std = np.load(os.path.join(audio_dir, 'std.npy'))
+        self.music_max = np.load(os.path.join(audio_dir, 'max.npy'))
+        self.music_min = np.load(os.path.join(audio_dir, 'min.npy'))
 
     def __len__(self):
         return len(self.gestures)
@@ -27,8 +27,18 @@ class GestureMusicDataset(Dataset):
         return torch.tensor(gesture_keypoints_pad), torch.tensor(music_mfcc)
 
     def normalize(self, mfcc):
-        norm_mfcc = (mfcc.T - self.music_mean) / self.music_std
-        return norm_mfcc
+        min_max = (mfcc.T - self.music_min) / (self.music_max - self.music_min)
+        norm_mfcc = 2 * min_max - 1
+        assert norm_mfcc.min() >= -1 and norm_mfcc.max() <= 1
+        
+        return 2 * min_max - 1
+
+    def revert(self, mfcc):
+        min_max = (mfcc + 1) / 2
+        mfcc = min_max * (self.music_max - self.music_min) + self.music_min
+        print(mfcc.shape)
+        
+        return mfcc
 
     def get_music_name(self, idx):
         start = self.gestures[idx].find('_m') + 1

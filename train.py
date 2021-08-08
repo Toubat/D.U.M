@@ -4,16 +4,17 @@ from torch.optim import Adam
 from torch.utils.data import Dataset, DataLoader
 from dataset import GestureMusicDataset
 from model import GestureEncoder, MusicGenerator, Discriminator, VAE_TransGAN
+import numpy as np
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+
 input_len = 512
-output_len = 938
-batch_size = 10
+output_len = 431
+batch_size = 2
 epochs=5
 lr=3e-4
-alpha=0.1
-gamma=8
+gamma=0.1
 
 
 gesture_encoder = GestureEncoder(
@@ -24,7 +25,7 @@ gesture_encoder = GestureEncoder(
     out_dim=1024, 
     max_len=input_len, 
     pos_ff_dim=512, 
-    dropout=0.1
+    dropout=0.15
 ).to(device)
 music_generator = MusicGenerator(in_dim=1024, output_len=output_len).to(device)
 discriminator = Discriminator(
@@ -32,7 +33,7 @@ discriminator = Discriminator(
     hid_dim=128, 
     n_heads=4, 
     pos_ff_dim=512, 
-    dropout=0.1, 
+    dropout=0.15, 
     output_len=output_len
 ).to(device)
 
@@ -40,16 +41,16 @@ dataset = GestureMusicDataset(gesture_dir='./video', audio_dir='./audio_mfcc', p
 # Create a DataLoader to process dataset in batches
 data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-optim_E = Adam(gesture_encoder.parameters(), lr=lr, betas=(0.9, 0.98), eps=1e-9)
-optim_G = Adam(music_generator.parameters(), lr=lr, betas=(0.9, 0.98), eps=1e-9)
-optim_D = Adam(discriminator.parameters(), lr=lr*alpha, betas=(0.9, 0.98), eps=1e-9)
+optim_E = Adam(gesture_encoder.parameters(), lr=lr, betas=(0.9, 0.98), eps=1e-8)
+optim_G = Adam(music_generator.parameters(), lr=lr, betas=(0.9, 0.98), eps=1e-8)
+optim_D = Adam(discriminator.parameters(), lr=lr*gamma, betas=(0.9, 0.98), eps=1e-8)
 
 bce_loss_fn = nn.BCELoss().to(device)
 mse_loss_fn = nn.MSELoss().to(device) 
 
 
-def make_model(input_len, output_len, gesture_encoder, music_generator, discriminator):
-    model = VAE_TransGAN(input_len, output_len, gesture_encoder, music_generator, discriminator)
+def make_model(gesture_encoder, music_generator, discriminator):
+    model = VAE_TransGAN(gesture_encoder, music_generator, discriminator)
     for p in model.parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform(p)
@@ -75,10 +76,10 @@ def compute_loss(model, gestures, musics):
     loss_kl_div = (-0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())) / torch.numel(mean)
 
     return loss_gan, loss_rec, loss_kl_div
-
+    
 
 def train(pretrained=False):
-    model = make_model(input_len, output_len, gesture_encoder, music_generator, discriminator)
+    model = make_model(gesture_encoder, music_generator, discriminator)
     if pretrained:
         model.load_state_dict(torch.load('model_weights.pth'))
     for epoch in range(epochs):
@@ -86,27 +87,37 @@ def train(pretrained=False):
             model.train()
             # Loss: Encoder, Generator, Discriminator
             gestures, musics = gestures.float().to(device), musics.float().to(device)
-            # Backpropagation - Discriminator
-            loss_gan, loss_rec, loss_kl_div = compute_loss(model, gestures, musics)
-            loss_D = loss_gan
-            optim_D.zero_grad()
-            loss_D.backward()
-            optim_D.step()
             # Backpropagation - Encoder
+            print('Encoder')
             loss_gan, loss_rec, loss_kl_div = compute_loss(model, gestures, musics)
             loss_E = loss_kl_div + loss_rec
             optim_E.zero_grad()
             loss_E.backward()
             optim_E.step()
             # Backpropagation - Generator
+            print('Generator')
             loss_gan, loss_rec, loss_kl_div = compute_loss(model, gestures, musics)
-            loss_G = gamma * loss_rec - loss_gan
+            loss_G = loss_rec - gamma * loss_gan
             optim_G.zero_grad()
             loss_G.backward()
             optim_G.step()
+            # Backpropagation - Discriminator
+            print('Discriminator')
+            loss_gan, loss_rec, loss_kl_div = compute_loss(model, gestures, musics)
+            loss_D = loss_gan
+            optim_D.zero_grad()
+            loss_D.backward()
+            optim_D.step()
             
             if i % 5 == 0:
-                print(f'Epoch: [{epoch+1}/{epochs}], Batch: [{(i+1)*batch_size}/{450}], Loss_E: {loss_E.item():.3f}, Loss_G: {loss_G.item():.3f}, Loss_D: {loss_D.item():.3f}')
+                print(f'Epoch: [{epoch+1}/{epochs}], Batch: [{(i+1)*batch_size}/{450}], Loss_E: {loss_E.item():3.3f}, Loss_G: {loss_G.item():3.3f}, Loss_D: {loss_D.item():3.3f}')
+                model.eval()
+                with torch.no_grad():
+                    music = model.test(gestures)
+                    music = music.detach().cpu().numpy()
+                    music = dataset.revert(music)
+                    np.save(f'music_epoch_{epoch}.npy', music,allow_pickle=True, fix_imports=True)
+                
         torch.save(model.state_dict(), 'model_weights.pth')
 
 
