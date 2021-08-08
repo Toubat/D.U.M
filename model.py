@@ -278,28 +278,12 @@ class Discriminator(nn.Module):
 # VAE-GAN with Transformer
 # x (700, 69) -> GestureEncoder -> latent vector (v) -> MusicGenerator -> music spectrogram (m) -> Discriminator -> fake/real -> loss
 class VAE_TransGAN(nn.Module):
-    def __init__(self, input_len, output_len):
+    def __init__(self, input_len, output_len, gesture_encoder, music_generator, discriminator):
         super(VAE_TransGAN, self).__init__()
         
-        self.gesture_encoder = GestureEncoder(
-            num_layers=6, 
-            n_heads=8, 
-            in_dim=69, 
-            hid_dim=256, 
-            out_dim=1024, 
-            max_len=input_len, 
-            pos_ff_dim=512, 
-            dropout=0.1
-        ).to(device)
-        self.music_generator = MusicGenerator(in_dim=1024, output_len=output_len).to(device)
-        self.discriminator = Discriminator(
-            num_layers=6, 
-            hid_dim=128, 
-            n_heads=4, 
-            pos_ff_dim=512, 
-            dropout=0.1, 
-            output_len=output_len
-        ).to(device)
+        self.gesture_encoder = gesture_encoder
+        self.music_generator = music_generator
+        self.discriminator = discriminator
 
     def reparameterize(self, mean, log_var):
         std = torch.exp(log_var/2)
@@ -307,30 +291,23 @@ class VAE_TransGAN(nn.Module):
         return mean + eps * std
 
     def forward(self, gesture, music_real):
+        batch_size = gesture.size()[0]
         # x = [batch_size, input_len, 69]
         # music_real = [batch_size, output_len, 128]
         mean, log_var = self.gesture_encoder(gesture)
-        # [batch_size, 512]
+        # [batch_size, 1024]
         z = self.reparameterize(mean, log_var)
-        # music_real = [batch_size, output_len, 128]
+        z_p = torch.randn(batch_size, 1024).to(device)
+        # [batch_size, output_len, 128]
         music_fake = self.music_generator(z)
+        music_noise = self.music_generator(z_p)
         # [batch_size, 1], [batch_size, output_len * 64]
         real_score, real_layer = self.discriminator(music_real)
         fake_score, fake_layer = self.discriminator(music_fake)
+        noise_score, _ = self.discriminator(music_noise)
 
-        return mean, log_var, real_score, fake_score, real_layer, fake_layer
-
-def main():
-    gesture = torch.randn(2, 512, 69).to(device)
-    music = torch.randn(2, 938, 128).to(device)
-
-    model = VAE_TransGAN(512, 938)
-    mean, log_var, real_score, fake_score, real_layer, fake_layer = model.forward(gesture, music)
-    for x in [mean, log_var, real_score, fake_score, real_layer, fake_layer]:
-        print(x.size(), x.requires_grad)
-
-    return 0
+        return mean, log_var, real_score, fake_score, noise_score, real_layer, fake_layer
 
 
 if __name__ == '__main__':
-    main()
+    pass

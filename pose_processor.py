@@ -26,8 +26,8 @@ class PoseDetector():
                     if id in self.discard_points:
                         continue
                     height, width, channel = img.shape
-                    # cx, cy = int(lm.x * width), int(lm.y * height)
-                    # cv2.circle(img, (cx, cy), 5, (255, 0, 0), cv2.FILLED)
+                    cx, cy = int(lm.x * width), int(lm.y * height)
+                    cv2.circle(img, (cx, cy), 5, (255, 0, 0), cv2.FILLED)
                     # normalize pkeypoints (value range between -1 and 1)
                     keypoint.append(lm.x * 2 - 1)
                     keypoint.append(lm.y * 2 - 1)
@@ -38,7 +38,7 @@ class PoseDetector():
                 keypoints.append(keypoints[-1])  
                 originals.append(originals[-1])
             # cv2.putText(img, str(int(fps)), (70, 50), cv2.FONT_HERSHEY_PLAIN, 3, (255, 0, 0), 3)
-            # cv2.imshow("Image", img)
+            cv2.imshow("Image", img)
             if cv2.waitKey(5) & 0xFF == 27:
                 break
         cap.release()
